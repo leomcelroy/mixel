@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        #pixelCanvas {
+            border: 1px solid black;
+            cursor: crosshair;
+        }
+
+        .og-canvas {
+
+        }
+    </style>
+    <title>Mixel</title>
+</head>
+<body>
+    <h1>Pixel Art Maker</h1>
+    <div style="display: flex; align-items: center;">
+      <form id="sizePicker">
+          Grid Size X: <input type="number" id="inputSizeX" value="10" min="1"><br>
+          Grid Size Y: <input type="number" id="inputSizeY" value="10" min="1"><br>
+          Pick A Color: <input type="color" id="colorPicker"><br>
+          <input type="submit" value="Make Grid">
+      </form>
+      <select id="modeSelector">
+        <option value="draw">Draw</option>
+        <option value="pick">Pick</option>
+      </select>
+
+      <button id="exportDrawnLayer">Export Drawn Layer</button>
+      <button id="exportCombinedLayers">Export Combined Layers</button>
+    </div>
+    <canvas id="pixelCanvas" width="400" height="400"></canvas>
+
+    <script>
+        const sizePicker = document.querySelector('#sizePicker');
+        const pixelCanvas = document.querySelector('#pixelCanvas');
+        const colorPicker = document.querySelector('#colorPicker');
+        const exportDrawnLayer = document.querySelector('#exportDrawnLayer');
+        const exportCombinedLayers = document.querySelector('#exportCombinedLayers');
+        const ctx = pixelCanvas.getContext('2d');
+
+        // state
+        const gridData = {
+            width: 10,
+            height: 10,
+            colors: {},
+        }
+
+        let drawing = false;
+        let lastPoint = null;
+        let image = null;
+        let tool = "pick" // "pick"
+
+        modeSelector.addEventListener("input", e => {
+            tool = e.target.value;
+        })
+
+        sizePicker.addEventListener('submit', function(event) {
+            event.preventDefault();
+            gridData.width = Number(document.querySelector('#inputSizeX').value);
+            gridData.height = Number(document.querySelector('#inputSizeY').value);
+            gridData.colors = {};
+            drawGrid(pixelCanvas, gridData);
+        });
+
+        pixelCanvas.addEventListener('mousedown', function(event) {
+
+            lastPoint = getMousePos(pixelCanvas, event);
+
+            if (tool === "draw") drawing = true;
+            else if (tool === "pick") {
+                const color = averageColorAtPosition(
+                    pixelCanvas, 
+                    gridData.width, 
+                    gridData.height, 
+                    lastPoint.x, 
+                    lastPoint.y
+                )
+
+                colorPicker.value = color;
+
+            }
+        });
+
+        pixelCanvas.addEventListener('mouseup', function() {
+            drawing = false;
+            lastPoint = null;
+        });
+
+        pixelCanvas.addEventListener('mousemove', function(event) {
+            if (drawing) {
+                const currentPoint = getMousePos(pixelCanvas, event);
+                const cellsToFill = drawLine(lastPoint, currentPoint);
+                cellsToFill.forEach(({ x, y }) => {
+                    gridData.colors[`${x},${y}`] = colorPicker.value;
+                });
+                lastPoint = currentPoint;
+
+                drawGrid(pixelCanvas, gridData);
+            }
+        });
+
+        pixelCanvas.addEventListener('drop', function(event) {
+            event.preventDefault();
+            const file = event.dataTransfer.files[0];
+            createImageFromFile(file);
+        });
+
+        pixelCanvas.addEventListener('dragover', function(event) {
+            event.preventDefault();
+        });
+
+
+
+        function drawGrid(canvas, gridData) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            if (image) {
+                ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+            }
+
+            drawCells(canvas, gridData);
+
+            const { width, height } = gridData;
+
+            const cellSizeX = canvas.width / width;
+            const cellSizeY = canvas.height / height
+
+            ctx.strokeStyle = 'lightgray';
+            for (let i = 0; i < width; i++) {
+                for (let j = 0; j < height; j++) {
+                    ctx.strokeRect(i * cellSizeX, j * cellSizeY, cellSizeX, cellSizeY);
+                }
+            }
+
+            
+        }
+
+        function drawCells(canvas, gridData) {
+            const ctx = canvas.getContext("2d");
+            const cellSizeX = canvas.width / gridData.width;
+            const cellSizeY = canvas.height / gridData.height;
+
+            for (const cell in gridData.colors) {
+                const [x, y] = cell.split(",").map(Number);
+                const color = gridData.colors[cell];
+                ctx.fillStyle = color;
+                ctx.fillRect(x * cellSizeX-.5, y * cellSizeY-.5, cellSizeX+1, cellSizeY+1);
+            }
+   
+        }
+
+        function drawLine(point1, point2) {
+            const cellSizeX = pixelCanvas.width / gridData.width;
+            const cellSizeY = pixelCanvas.height / gridData.height;
+            let x1 = Math.floor(point1.x / cellSizeX);
+            let y1 = Math.floor(point1.y / cellSizeY);
+            const x2 = Math.floor(point2.x / cellSizeX);
+            const y2 = Math.floor(point2.y / cellSizeY);
+            const dx = Math.abs(x2 - x1);
+            const dy = Math.abs(y2 - y1);
+            const sx = (x1 < x2) ? 1 : -1;
+            const sy = (y1 < y2) ? 1 : -1;
+            let err = dx - dy;
+
+            const cellsToFill = [];
+
+            while(true) {
+                cellsToFill.push({ x: x1, y: y1 });
+
+                if ((x1 === x2) && (y1 === y2)) break;
+                const e2 = 2 * err;
+                if (e2 > -dy) { err -= dy; x1 += sx; }
+                if (e2 < dx) { err += dx; y1 += sy; }
+            }
+
+            return cellsToFill;
+        }
+
+        function getMousePos(canvas, event) {
+            const rect = canvas.getBoundingClientRect();
+            return {
+                x: event.clientX - rect.left,
+                y: event.clientY - rect.top
+            };
+        }
+
+        function createImageFromFile(file) {
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                image = new Image();
+                image.onload = function() {
+                    const aspectRatio = image.width / image.height;
+                    let newWidth = image.width;
+                    let newHeight = image.height;
+                    if (newWidth > pixelCanvas.width) {
+                        newWidth = pixelCanvas.width;
+                        newHeight = newWidth / aspectRatio;
+                    }
+                    if (newHeight > pixelCanvas.height) {
+                        newHeight = pixelCanvas.height;
+                        newWidth = newHeight * aspectRatio;
+                    }
+                    pixelCanvas.width = newWidth;
+                    pixelCanvas.height = newHeight;
+                    drawGrid(pixelCanvas, gridData);
+                };
+                image.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function averageColorAtPosition(canvas, gridWidth, gridHeight, x, y) {
+            const ctx = canvas.getContext("2d");
+            const cellSizeX = canvas.width / gridWidth;
+            const cellSizeY = canvas.height / gridHeight;
+            
+            const cellX = Math.floor(x / cellSizeX);
+            const cellY = Math.floor(y / cellSizeY);
+
+            const imageData = ctx.getImageData(cellX * cellSizeX, cellY * cellSizeY, cellSizeX, cellSizeY);
+            const data = imageData.data;
+            
+            let r = 0, g = 0, b = 0;
+
+            for (let i = 0; i < data.length; i += 4) {
+                r += data[i];
+                g += data[i + 1];
+                b += data[i + 2];
+            }
+
+            const numPixels = data.length / 4;
+            r /= numPixels;
+            g /= numPixels;
+            b /= numPixels;
+
+            return rgbToHex(r, g, b);
+        }
+
+        function rgbToHex(r, g, b) {
+            r = Math.round(r);
+            g = Math.round(g);
+            b = Math.round(b);
+            return "#" + ((1 << 24) | ((r&255) << 16) | ((g&255) << 8) | (b&255)).toString(16).slice(1).toUpperCase();
+        }
+
+        exportDrawnLayer.addEventListener('click', function() {
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCanvas.width = image.width;
+            tempCanvas.height = image.height;
+            drawCells(tempCanvas, gridData);
+            const dataUrl = tempCanvas.toDataURL('image/png');
+            const link = document.createElement('a');
+            link.download = 'combined_layers.png';
+            link.href = dataUrl;
+            link.click();
+        });
+
+        exportCombinedLayers.addEventListener('click', function() {
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCanvas.width = image.width;
+            tempCanvas.height = image.height;
+            tempCtx.drawImage(image, 0, 0);
+            drawCells(tempCanvas, gridData);
+            const dataUrl = tempCanvas.toDataURL('image/png');
+            const link = document.createElement('a');
+            link.download = 'combined_layers.png';
+            link.href = dataUrl;
+            link.click();
+        });
+
+        drawGrid(pixelCanvas, gridData);
+    </script>
+</body>
+</html>
